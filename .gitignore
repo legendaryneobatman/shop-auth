@@ -1,0 +1,8 @@
+#IDEs
+.idea
+
+#ENV
+.env
+
+/tmp
+
