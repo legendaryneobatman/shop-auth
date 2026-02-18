@@ -1,0 +1,1 @@
+protoc --go_out=. --go-rpc_out=. ../shop/schema/contracts.proto
