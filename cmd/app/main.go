@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
-	shop "shop-auth"
-	"shop-auth/internal/bootstrap"
+	"os/signal"
+	"shop-auth/internal/app"
+	"shop-auth/internal/services/auth"
+	"syscall"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -14,32 +15,46 @@ import (
 )
 
 func main() {
-	logrus.SetFormatter(new(logrus.JSONFormatter))
-
 	if err := godotenv.Load(); err != nil {
 		logrus.Fatalf("error loading env variables: %s", err.Error())
 	}
 
-	db, err := sqlx.Open("pgx", os.Getenv("SHARED_DB_URL"))
+	log := logrus.New()
+	log.SetFormatter(&logrus.JSONFormatter{})
 
+	db, err := sqlx.Open("pgx", os.Getenv("DB_URL"))
 	if err != nil {
-		logrus.Fatalf("failed to connect to db %s", err.Error())
+		logrus.Fatalf("failed to connect to db: %s", err.Error())
+	}
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		logrus.Fatalf("failed to ping db: %s", err.Error())
 	}
 
-	router := gin.Default()
-	router.Use(cors.New(cors.Config{
-		AllowAllOrigins: true,
-		AllowMethods:    []string{"GET", "POST", "PUT", "DELETE"},
-		AllowHeaders:    []string{"Origin", "Content-Type", "Accept", "Authorization"},
-	}))
-	cors.Default()
-	routesHandler := bootstrap.NewHandler(db)
-	routesHandler.Init(router)
+	authRepository := auth.NewRepository(db)
+	authService := auth.NewService(authRepository)
+	authHandler := auth.NewHandler(authService)
 
-	server := new(shop.Server)
-	if err := server.Run(os.Getenv("APP_HOST_PORT"), router); err != nil {
-		logrus.Fatalf("error occurred while running http server: %s", err.Error())
-	} else {
-		logrus.Infoln("Server started on port: ", os.Getenv("APP_HOST_PORT"))
+	port := os.Getenv("APP_HOST_PORT")
+
+	application := app.NewApp(log, authHandler, port)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		log.Info("Shutting down...")
+		cancel()
+	}()
+
+	if err := application.Run(ctx); err != nil && err != context.Canceled {
+		log.Fatalf("server error: %s")
 	}
+
+	log.Info("Server stopped gracefully")
 }
