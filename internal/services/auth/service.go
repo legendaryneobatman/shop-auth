@@ -22,6 +22,8 @@ const (
 	refreshTokenTTL = 7 * 24 * time.Hour
 )
 
+var ErrUserAlreadyExists = errors.New("user already exists")
+
 type Service struct {
 	jwtSecretKey []byte
 	repository   *Repository
@@ -47,6 +49,12 @@ type SignInResponse struct {
 	RefreshToken string
 }
 
+type SignUpInput struct {
+	name     string
+	username string
+	password string
+}
+
 func (s *Service) Authenticate(ctx context.Context, in SignInRequest) (*models.TokenPair, error) {
 	_user, err := s.repository.GetUserByUsername(in.username)
 	if err != nil {
@@ -65,9 +73,22 @@ func (s *Service) Authenticate(ctx context.Context, in SignInRequest) (*models.T
 		return nil, err
 	}
 
-	refreshToken, _, err := generateRefreshToken()
+	refreshToken, refreshTokenHash, err := generateRefreshToken()
 	if err != nil {
 		logrus.Errorf("Error when try to generate refresh token in Authenticate %s", err.Error())
+		return nil, err
+	}
+
+	revoked := false
+	if err := s.repository.SaveRefreshToken(models.RefreshToken{
+		UserID:    _user.ID,
+		TokenHash: refreshTokenHash,
+		ExpiresAt: time.Now().Add(refreshTokenTTL).Format(time.RFC3339),
+		IPAddress: nil,
+		UserAgent: nil,
+		Revoked:   &revoked,
+	}); err != nil {
+		logrus.Errorf("Error when saving refresh token in Authenticate %s", err.Error())
 		return nil, err
 	}
 
@@ -118,7 +139,7 @@ func (s *Service) ParseTokenForUserID(accessToken string) (int, error) {
 
 	if !token.Valid {
 		logrus.Errorf("Token is not valid")
-		return 0, err
+		return 0, errors.New("token is not valid")
 	}
 
 	claims, ok := token.Claims.(*tokenClaims)
@@ -141,7 +162,7 @@ func (s *Service) RefreshTokens(refreshToken string) (*models.TokenPair, error) 
 		return nil, err
 	}
 
-	storedTExpiresAtTime, err := time.Parse("YYYY-MM-DD HH:MM:SS", storedRefreshT.ExpiresAt)
+	storedTExpiresAtTime, err := time.Parse(time.RFC3339, storedRefreshT.ExpiresAt)
 	if err != nil {
 		logrus.Errorf("stored refresh token is expired %s", err.Error())
 		return nil, err
@@ -179,11 +200,13 @@ func (s *Service) RefreshTokens(refreshToken string) (*models.TokenPair, error) 
 		logrus.Errorf("Failed to generate refresh token %s", err.Error())
 		return nil, err
 	}
+
+	revoked := false
 	newTokenEntity := models.RefreshToken{
 		UserID:    _user.ID,
 		TokenHash: newRefreshTokenHash,
-		ExpiresAt: time.Now().Add(refreshTokenTTL).String(),
-		Revoked:   nil,
+		ExpiresAt: time.Now().Add(refreshTokenTTL).Format(time.RFC3339),
+		Revoked:   &revoked,
 	}
 	if err := s.repository.SaveRefreshToken(newTokenEntity); err != nil {
 		logrus.Errorf("Error when saving refresh token %s", err.Error())
@@ -219,6 +242,33 @@ func (s *Service) RevokeAllTokens(userID int) error {
 	}
 
 	return nil
+}
+
+func (s *Service) RegisterUser(ctx context.Context, in SignUpInput) (int, error) {
+	if _, err := s.repository.GetUserByUsername(in.username); err == nil {
+		return 0, ErrUserAlreadyExists
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(in.password), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, err
+	}
+
+	role := "user"
+	id, err := s.repository.CreateUser(models.User{
+		Name:     in.name,
+		Username: in.username,
+		Password: string(passwordHash),
+		Role:     &role,
+		IsActive: true,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return id, nil
 }
 
 func (s *Service) generateRefreshToken() (token string, tokenHash string, err error) {

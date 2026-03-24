@@ -22,7 +22,6 @@ type App struct {
 }
 
 func NewApp(log *logrus.Logger, authHandler *auth.Handler, port string) *App {
-	// Interceptors
 	loggingOpts := []logging.Option{
 		logging.WithLogOnEvents(
 			logging.PayloadReceived,
@@ -79,6 +78,19 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func interceptorLogger(l *logrus.Logger) logging.Logger {
+	blacklist := map[string]bool{
+		// Чувствительные данные
+		"grpc.request.content":  true,
+		"grpc.response.content": true,
+		"grpc.start_time":       true,
+		"protocol":              true,
+		"grpc.component":        true,
+		"grpc.method_type":      true,
+		"peer.address":          true,
+		"time":                  true,
+		"grpc.service":          true,
+	}
+
 	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
 		entry := l.WithContext(ctx)
 
@@ -87,6 +99,9 @@ func interceptorLogger(l *logrus.Logger) logging.Logger {
 			for i := 0; i < len(fields); i += 2 {
 				if i+1 < len(fields) {
 					if key, ok := fields[i].(string); ok {
+						if blacklist[key] {
+							continue
+						}
 						logrusFields[key] = fields[i+1]
 					}
 				}

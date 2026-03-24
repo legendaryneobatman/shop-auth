@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"shop-auth/internal/app"
@@ -22,7 +23,27 @@ func main() {
 	log := logrus.New()
 	log.SetFormatter(&logrus.JSONFormatter{})
 
-	db, err := sqlx.Open("pgx", os.Getenv("DB_URL"))
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		dbPort := os.Getenv("DB_PORT")
+		dbHost := os.Getenv("DB_HOST")
+		dbUser := os.Getenv("DB_USER")
+		dbPass := os.Getenv("DB_PASSWORD")
+		dbName := os.Getenv("DB_NAME")
+		if dbPort == "" || dbHost == "" || dbUser == "" || dbName == "" {
+			logrus.Fatalf("DB_URL is not set and DB_* variables are incomplete")
+		}
+		dbURL = fmt.Sprintf(
+			"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+			dbUser,
+			dbPass,
+			dbHost,
+			dbPort,
+			dbName,
+		)
+	}
+
+	db, err := sqlx.Open("pgx", dbURL)
 	if err != nil {
 		logrus.Fatalf("failed to connect to db: %s", err.Error())
 	}
@@ -37,6 +58,9 @@ func main() {
 	authHandler := auth.NewHandler(authService)
 
 	port := os.Getenv("APP_HOST_PORT")
+	if port == "" {
+		port = "3000"
+	}
 
 	application := app.NewApp(log, authHandler, port)
 
@@ -53,7 +77,7 @@ func main() {
 	}()
 
 	if err := application.Run(ctx); err != nil && err != context.Canceled {
-		log.Fatalf("server error: %s")
+		log.Fatalf("server error: %v", err)
 	}
 
 	log.Info("Server stopped gracefully")

@@ -44,8 +44,11 @@ func (r *Repository) GetUserByID(userID int) (*models.User, error) {
 }
 
 func (r *Repository) SaveRefreshToken(token models.RefreshToken) error {
-	query := fmt.Sprintf("INSERT INTO refresh_tokens (user_id,expires_at,ip_address,user_agent,revoked) values ($1, $2,$3, $4, $5)")
-	row := r.db.QueryRow(
+	query := fmt.Sprintf(`
+		INSERT INTO refresh_tokens (user_id, token_hash, expires_at, ip_address, user_agent, revoked)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`)
+	_, err := r.db.Exec(
 		query,
 		token.UserID,
 		token.TokenHash,
@@ -54,9 +57,6 @@ func (r *Repository) SaveRefreshToken(token models.RefreshToken) error {
 		token.UserAgent,
 		token.Revoked,
 	)
-
-	err := row.Scan()
-
 	if err != nil {
 		logrus.Errorf("Error when SaveRefreshToken %s", err.Error())
 		return err
@@ -78,34 +78,34 @@ func (r *Repository) GetRefreshTokenByHash(hash string) (*models.RefreshToken, e
 func (r *Repository) GetRefreshTokensByUserID(userID int) ([]models.RefreshToken, error) {
 	query := fmt.Sprintf("SELECT id, user_id, token_hash, expires_at, ip_address, user_agent, revoked FROM refresh_tokens WHERE user_id=$1")
 	rows, err := r.db.Queryx(query, userID)
-	defer rows.Close()
-	if rows.Err() != nil {
-		logrus.Errorf("Error when rows for GetRefreshTokensByUserID %s", rows.Err().Error())
-		return nil, rows.Err()
-	}
 	if err != nil {
 		logrus.Errorf("Error when executing query for GetRefreshTokensByUserID %s", err.Error())
 		return nil, err
 	}
+	defer rows.Close()
 
 	var refreshTokens []models.RefreshToken
 	for rows.Next() {
 		var rf models.RefreshToken
 
 		if err := rows.StructScan(&rf); err != nil {
-			logrus.Fatalf("Error when scaning rows for GetRefreshTokensByUserID %s", err.Error())
+			logrus.Errorf("Error when scaning rows for GetRefreshTokensByUserID %s", err.Error())
 			return nil, err
 		}
 
 		refreshTokens = append(refreshTokens, rf)
 	}
 
+	if rows.Err() != nil {
+		logrus.Errorf("Error when iterating rows for GetRefreshTokensByUserID %s", rows.Err().Error())
+		return nil, rows.Err()
+	}
+
 	return refreshTokens, nil
 }
 func (r *Repository) RevokeRefreshToken(tokenID int) error {
-	query := fmt.Sprintf("UPDATE refresh_tokens SET revoked=true WHERE $1")
-	row := r.db.QueryRow(query, tokenID)
-	err := row.Scan()
+	query := fmt.Sprintf("UPDATE refresh_tokens SET revoked=true WHERE id=$1")
+	_, err := r.db.Exec(query, tokenID)
 	if err != nil {
 		logrus.Errorf("Error when RevokeRefreshToken %s", err.Error())
 		return err
@@ -115,12 +115,36 @@ func (r *Repository) RevokeRefreshToken(tokenID int) error {
 }
 func (r *Repository) RevokeAllUserTokens(userID int) error {
 	query := fmt.Sprintf("UPDATE refresh_tokens SET revoked=true WHERE user_id=$1")
-	row := r.db.QueryRow(query, userID)
-	err := row.Scan()
-
+	_, err := r.db.Exec(query, userID)
 	if err != nil {
 		logrus.Errorf("Error when RevokeAllUserTokens %s", err.Error())
+		return err
+	}
+	return nil
+}
+
+func (r *Repository) CreateUser(user models.User) (int, error) {
+	query := fmt.Sprintf(`
+		INSERT INTO users (name, username, password_hash, avatar_url, email, phone, role, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		RETURNING id
+	`)
+
+	var id int
+	if err := r.db.QueryRow(
+		query,
+		user.Name,
+		user.Username,
+		user.Password,
+		user.AvatarURL,
+		user.Email,
+		user.Phone,
+		user.Role,
+		user.IsActive,
+	).Scan(&id); err != nil {
+		logrus.Errorf("Error when CreateUser %s", err.Error())
+		return 0, err
 	}
 
-	return nil
+	return id, nil
 }

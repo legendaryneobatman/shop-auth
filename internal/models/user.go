@@ -7,11 +7,11 @@ type User struct {
 	Name      string    `json:"name" db:"name" binding:"required"`
 	Username  string    `json:"username" db:"username" binding:"required"`
 	Password  string    `json:"password" db:"password_hash" binding:"required"`
-	AvatarURL *string   `json:"avatar_url,omitempty" db:"avatar_url"` // Опциональное поле
+	AvatarURL *string   `json:"avatar_url,omitempty" db:"avatar_url"`
 	Email     *string   `json:"email" db:"email"`
-	Phone     *string   `json:"phone,omitempty" db:"phone"` // Опциональное поле
-	Role      *string   `json:"role" db:"role"`             // Например: "user", "admin", "moderator"
-	IsActive  bool      `json:"is_active" db:"is_active"`   // Для блокировки/активации
+	Phone     *string   `json:"phone,omitempty" db:"phone"`
+	Role      *string   `json:"role" db:"role"`
+	IsActive  bool      `json:"is_active" db:"is_active"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
